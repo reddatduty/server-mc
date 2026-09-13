@@ -1,0 +1,157 @@
+nce(
+     client_id: &str,
+ ) -> Result<(Child, LaunchResult), String> {
+     if !instance.installed { return Err("Instance is not installed yet".to_string()); }
+-    if account.expires_at_unix <= chrono::Utc::now().timestamp() { return Err("Microsoft session expired. Sign in again.".to_string()); }
++    if account.account_type == "microsoft" && account.expires_at_unix <= chrono::Utc::now().timestamp() { return Err("Microsoft session expired. Sign in again.".to_string()); }
+     let runtime = instance_dir(data_dir, &instance.id).join("runtime");
+     let vanilla: Value = serde_json::from_slice(&fs::read(runtime.join("vanilla.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+     let loader: Option<Value> = fs::read(runtime.join("loader.json")).ok().and_then(|x| serde_json::from_slice(&x).ok());
+@@ -827,14 +827,18 @@ pub fn spawn_instance(
+     vars.insert("assets_root", assets.to_string_lossy().into_owned());
+     vars.insert("assets_index_name", asset_index.to_string());
+     vars.insert("auth_uuid", account.uuid.replace('-', ""));
+-    vars.insert("auth_access_token", account.access_token.clone());
+-    vars.insert("auth_xuid", account.xuid.clone());
+-    vars.insert("clientid", client_id.to_string());
+-    vars.insert("user_type", "msa".to_string());
++    vars.insert("auth_access_token", if account.account_type == "offline" { "0".to_string() } else { account.access_token.clone() });
++    vars.insert("auth_xuid", if account.account_type == "offline" { String::new() } else { account.xuid.clone() });
++    vars.insert("clientid", if account.account_type == "offline" { String::new() } else { client_id.to_string() });
++    vars.insert("user_type", if account.account_type == "offline" { "legacy".to_string() } else { "msa".to_string() });
++    vars.insert("user_properties", "{}".to_string());
++    vars.insert("user_properties_map", "{}".to_string());
++    vars.insert("profile_properties", "{}".to_string());
++    vars.insert("auth_session", if account.account_type == "offline" { "0".to_string() } else { account.access_token.clone() });
+     vars.insert("version_type", version_type.to_string());
+     vars.insert("natives_directory", natives.to_string_lossy().into_owned());
+     vars.insert("launcher_name", "Vertex".to_string());
+-    vars.insert("launcher_version", "0.3.0".to_string());
++    vars.insert("launcher_version", "0.3.1".to_string());
+     vars.insert("classpath", cp.clone());
+     vars.insert("classpath_separator", sep.to_string());
+     vars.insert("library_directory", data_dir.join("cache").join("libraries").to_string_lossy().into_owned());
+diff --git a/src-tauri/src/models.rs b/src-tauri/src/models.rs
+index d0f03f6..1dcd078 100644
+--- a/src-tauri/src/models.rs
++++ b/src-tauri/src/models.rs
+@@ -167,6 +167,7 @@ pub struct AccountSummary {
+     pub id: String,
+     pub username: String,
+     pub uuid: String,
++    pub account_type: String,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -174,6 +175,7 @@ pub struct AccountSession {
+     pub id: String,
+     pub username: String,
+     pub uuid: String,
++    pub account_type: String,
+     pub access_token: String,
+     pub refresh_token: String,
+     pub xuid: String,
+@@ -186,10 +188,16 @@ pub struct StoredAccount {
+     pub id: String,
+     pub username: String,
+     pub uuid: String,
++    #[serde(default = "default_account_type")]
++    pub account_type: String,
++    #[serde(default)]
+     pub xuid: String,
++    #[serde(default)]
+     pub protected_refresh_token: String,
+ }
+ 
++fn default_account_type() -> String { "microsoft".to_string() }
++
+ #[derive(Debug, Clone, Serialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct DeviceLoginStart {
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 993b277..54fed4e 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "Vertex Launcher",
+-  "version": "0.3.0",
++  "version": "0.3.1",
+   "identifier": "app.vertex.launcher",
+   "build": {
+     "beforeDevCommand": "npm run dev",
+@@ -41,4 +41,4 @@
+       "icons/icon.ico"
+     ]
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/src/App.vue b/src/App.vue
+index 2e52daf..f17cf7c 100644
+--- a/src/App.vue
++++ b/src/App.vue
+@@ -49,6 +49,8 @@ const settings = ref<LauncherSettings>({
+ });
+ const loginOpen = ref(false);
+ const accountOpen = ref(false);
++const offlineOpen = ref(false);
++const offlineUsername = ref('');
+ const loginFlow = ref<DeviceLoginStart | null>(null);
+ const loginState = ref<'idle'|'waiting'|'done'|'error'>('idle');
+ let loginTimer = 0;
+@@ -115,7 +117,7 @@ async function prepare() {
+ async function play() {
+   if (!current.value || !native) { notify('Native build required to launch'); return; }
+   if (!current.value.installed) { await prepare(); if (!current.value?.installed) return; }
+-  if (!activeAccountId.value) { await startLogin(); return; }
++  if (!activeAccountId.value) { accountOpen.value=true; return; }
+   busy.value='play'; error.value='';
+   try { const result = await api.launchInstance(current.value.id, activeAccountId.value); notify(`Minecraft started · PID ${result.pid}`); await reloadInstances(); }
+   catch(e){fail(e)} finally{busy.value=''}
+@@ -178,6 +180,15 @@ async function signOut(id:string){
+   accounts.value=accounts.value.filter(a=>a.id!==id); if(activeAccountId.value===id)activeAccountId.value=accounts.value[0]?.id||'';
+ }
+ function addAccount(){accountOpen.value=false;startLogin()}
++function openOffline(){accountOpen.value=false;offlineUsername.value='';offlineOpen.value=true}
++async function createOffline(){
++  if(!native){notify('Offline profiles are available in the native build');return}
++  error.value=''; busy.value='offline-account';
++  try{
++    const account=await api.createOfflineAccount(offlineUsername.value);
++    accounts.value=await api.listAccounts();activeAccountId.value=account.id;offlineOpen.value=false;offlineUsername.value='';notify(`Offline profile · ${account.username}`)
++  }catch(e){fail(e)}finally{busy.value=''}
++}
+ function closeLogin(){loginOpen.value=false;window.clearInterval(loginTimer);loginTimer=0}
+ 
+ async function startLogin(){
+@@ -384,9 +395,17 @@ onBeforeUnmount(()=>{window.clearInterval(loginTimer);window.clearTimeout(search
+       <div class="modal account-modal">
+         <div class="modal-title"><strong>Accounts</strong><button class="square" @click="accountOpen=false"><Icon name="x" :size="16"/></button></div>
+         <div class="account-list">
+-          <div v-for="account in accounts" :key="account.id" class="account-row" :class="{active:account.id===activeAccountId}" @click="selectAccount(account.id)"><span class="avatar">{{ account.username[0]?.toUpperCase() }}</span><strong>{{ account.username }}</strong><button class="icon-danger" @click.stop="signOut(account.id)"><Icon name="trash" :size="14"/></button></div>
++          <div v-for="account in accounts" :key="account.id" class="account-row" :class="{active:account.id===activeAccountId}" @click="selectAccount(account.id)"><span class="avatar">{{ account.username[0]?.toUpperCase() }}</span><div class="account-name"><strong>{{ account.username }}</strong><small v-if="account.accountType==='offline'">Offline</small></div><button class="icon-danger" @click.stop="signOut(account.id)"><Icon name="trash" :size="14"/></button></div>
+         </div>
+-        <div class="modal-actions"><button class="primary" @click="addAccount"><Icon name="plus" :size="14"/> Add account</button></div>
++        <div class="account-actions"><button class="primary" @click="addAccount">Log in with Microsoft</button><button class="ghost" @click="openOffline">Offline Mode</button></div>
++      </div>
++    </div>
++
++    <div v-if="offlineOpen" class="modal-wrap" @mousedown.self="offlineOpen=false">
++      <div class="modal offline-modal">
++        <div class="modal-title"><strong>Offline Mode</strong><button class="square" @click="offlineOpen=false"><Icon name="x" :size="16"/></button></div>
++        <label><span>Username</span><input v-model.trim="offlineUsername" maxlength="16" placeholder="Minecraft username" @keyup.enter="createOffline"/></label>
++        <div class="modal-actions"><button class="ghost" @click="offlineOpen=false">Cancel</button><button class="primary" :disabled="busy==='offline-account'" @click="createOffline">Use Offline Mode</button></div>
+       </div>
+     </div>
+ 
+diff --git a/src/lib/backend.ts b/src/lib/backend.ts
+index 6f7077f..2aef524 100644
+--- a/src/lib/backend.ts
++++ b/src/lib/backend.ts
+@@ -33,6 +33,7 @@ export const latestLog = (instanceId: string) => invoke<LogSnapshot>('latest_log
+ export const openInstanceFolder = (instanceId: string) => invoke<void>('open_instance_folder', { instanceId });
+ export const beginMicrosoftLogin = () => invoke<DeviceLoginStart>('begin_microsoft_login');
+ export const completeMicrosoftLogin = (flowId: string) => invoke<AccountSummary>('complete_microsoft_login', { flowId });
++export const createOff
