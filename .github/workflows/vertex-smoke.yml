@@ -1,0 +1,55 @@
+name: Vertex Installer Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/vertex-smoke.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download built installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          Invoke-WebRequest -Headers $headers -Uri "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/10320199239/zip" -OutFile artifact.zip
+          Expand-Archive artifact.zip artifact -Force
+          $installer = Get-ChildItem artifact -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Installer not found in artifact.' }
+          Write-Host "Installer: $($installer.FullName)"
+
+      - name: Silent install and startup smoke test
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem artifact -Filter '*.exe' | Select-Object -First 1
+          $installDir = Join-Path $env:RUNNER_TEMP 'VertexSmoke'
+          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)." }
+
+          $app = Get-ChildItem $installDir -Filter '*.exe' -Recurse | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (-not $app) {
+            Write-Host 'Install directory contents:'
+            Get-ChildItem $installDir -Recurse | ForEach-Object { Write-Host $_.FullName }
+            throw 'Installed launcher executable not found.'
+          }
+
+          Write-Host "Launching: $($app.FullName)"
+          $proc = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) { throw "Vertex Launcher exited during startup with code $($proc.ExitCode)." }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host 'Vertex Launcher stayed alive through startup smoke test.'
