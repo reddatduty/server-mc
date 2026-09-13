@@ -26,7 +26,9 @@ jobs:
           $names = @(
             'final00.txt','final01.txt','final02.txt','final03.txt',
             'final04a.txt','final04b0.txt','final04b1.txt','final04b2.txt','final04b3.txt','final04c.txt',
-            'final05.txt','final06.txt','final07.txt','final08.txt','final09.txt'
+            'final05_00.txt','final05_01.txt','final05_02.txt','final05_03.txt','final05_04.txt','final05_05.txt',
+            'final05_06.txt','final05_07.txt','final05_08.txt','final05_09.txt','final05_10.txt','final05_11.txt',
+            'final06.txt','final07.txt','final08.txt','final09.txt'
           )
           $b64 = ($names | ForEach-Object { Get-Content (Join-Path 'vertex-final' $_) -Raw }) -join ''
           [IO.File]::WriteAllBytes('Vertex-Launcher-0.3.1-Source.zip', [Convert]::FromBase64String($b64))
