@@ -1,0 +1,173 @@
+diff --git a/package.json b/package.json
+index 74358b9..53eae04 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "vertex-launcher",
+   "private": true,
+-  "version": "0.3.0",
++  "version": "0.3.1",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 80c963e..e5abaf3 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "vertex-launcher"
+-version = "0.3.0"
++version = "0.3.1"
+ description = "A lightweight Minecraft launcher"
+ authors = ["Vertex Launcher"]
+ edition = "2021"
+@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
+ sha1 = "0.10"
+ sha2 = "0.10"
+ hex = "0.4"
++md5 = "0.7"
+ zip = "2"
+ walkdir = "2"
+ urlencoding = "2"
+diff --git a/src-tauri/src/auth.rs b/src-tauri/src/auth.rs
+index 3d8451f..2e13267 100644
+--- a/src-tauri/src/auth.rs
++++ b/src-tauri/src/auth.rs
+@@ -119,10 +119,10 @@ async fn finish_microsoft_login(
+     let username = profile.get("name").and_then(Value::as_str).ok_or("Minecraft profile name missing")?.to_string();
+     let id = uuid.clone();
+     let session = AccountSession {
+-        id: id.clone(), username: username.clone(), uuid: uuid.clone(), access_token: mc_access,
++        id: id.clone(), username: username.clone(), uuid: uuid.clone(), account_type: "microsoft".to_string(), access_token: mc_access,
+         refresh_token, xuid, expires_at_unix: Utc::now().timestamp() + expires,
+     };
+-    Ok((AccountSummary { id, username, uuid }, session))
++    Ok((AccountSummary { id, username, uuid, account_type: "microsoft".to_string() }, session))
+ }
+ 
+ async fn xbox_user_auth(client: &Client, msa_token: &str) -> Result<(String, String), String> {
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 2c5419f..1103bfa 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -54,12 +54,16 @@ fn ensure_instance_stopped(state: &LauncherState, id: &str) -> Result<(), String
+ }
+ 
+ fn persist_account(data_dir: &std::path::Path, session: &AccountSession) -> Result<(), String> {
+-    if !cfg!(target_os = "windows") { return Ok(()); }
+-    let protected_refresh_token = storage::protect_secret(&session.refresh_token)?;
++    let protected_refresh_token = if session.account_type == "microsoft" {
++        if !cfg!(target_os = "windows") { return Ok(()); }
++        storage::protect_secret(&session.refresh_token)?
++    } else {
++        String::new()
++    };
+     let mut accounts = storage::load_accounts(data_dir);
+     let stored = StoredAccount {
+         id: session.id.clone(), username: session.username.clone(), uuid: session.uuid.clone(),
+-        xuid: session.xuid.clone(), protected_refresh_token,
++        account_type: session.account_type.clone(), xuid: session.xuid.clone(), protected_refresh_token,
+     };
+     accounts.retain(|a| a.id != stored.id);
+     accounts.push(stored);
+@@ -68,17 +72,32 @@ fn persist_account(data_dir: &std::path::Path, session: &AccountSession) -> Resu
+ 
+ fn load_persisted_sessions(data_dir: &std::path::Path) -> HashMap<String, AccountSession> {
+     let mut out = HashMap::new();
+-    if !cfg!(target_os = "windows") { return out; }
+     for stored in storage::load_accounts(data_dir) {
++        if stored.account_type == "offline" {
++            out.insert(stored.id.clone(), AccountSession {
++                id: stored.id, username: stored.username, uuid: stored.uuid, account_type: "offline".to_string(),
++                access_token: "0".to_string(), refresh_token: String::new(), xuid: String::new(), expires_at_unix: i64::MAX,
++            });
++            continue;
++        }
++        if !cfg!(target_os = "windows") { continue; }
+         let Ok(refresh_token) = storage::unprotect_secret(&stored.protected_refresh_token) else { continue };
+         out.insert(stored.id.clone(), AccountSession {
+-            id: stored.id, username: stored.username, uuid: stored.uuid, access_token: String::new(),
++            id: stored.id, username: stored.username, uuid: stored.uuid, account_type: "microsoft".to_string(), access_token: String::new(),
+             refresh_token, xuid: stored.xuid, expires_at_unix: 0,
+         });
+     }
+     out
+ }
+ 
++fn offline_uuid(username: &str) -> String {
++    let digest = md5::compute(format!("OfflinePlayer:{username}"));
++    let mut bytes = digest.0;
++    bytes[6] = (bytes[6] & 0x0f) | 0x30;
++    bytes[8] = (bytes[8] & 0x3f) | 0x80;
++    Uuid::from_bytes(bytes).to_string()
++}
++
+ #[tauri::command]
+ fn list_instances(state: State<'_, LauncherState>) -> Result<Vec<InstanceSummary>, String> {
+     state.instances.lock().map(|x| x.clone()).map_err(|e| e.to_string())
+@@ -389,17 +408,32 @@ async fn complete_microsoft_login(state: State<'_, LauncherState>, flow_id: Stri
+ #[tauri::command]
+ fn list_accounts(state: State<'_, LauncherState>) -> Result<Vec<AccountSummary>, String> {
+     let accounts = state.accounts.lock().map_err(|e| e.to_string())?;
+-    Ok(accounts.values().map(|a| AccountSummary { id: a.id.clone(), username: a.username.clone(), uuid: a.uuid.clone() }).collect())
++    Ok(accounts.values().map(|a| AccountSummary { id: a.id.clone(), username: a.username.clone(), uuid: a.uuid.clone(), account_type: a.account_type.clone() }).collect())
++}
++
++#[tauri::command]
++fn create_offline_account(state: State<'_, LauncherState>, username: String) -> Result<AccountSummary, String> {
++    let username = username.trim();
++    if username.len() < 3 || username.len() > 16 || !username.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
++        return Err("Offline username must be 3-16 characters and use only letters, numbers, or _.".to_string());
++    }
++    let uuid = offline_uuid(username);
++    let id = format!("offline:{uuid}");
++    let session = AccountSession {
++        id: id.clone(), username: username.to_string(), uuid: uuid.clone(), account_type: "offline".to_string(),
++        access_token: "0".to_string(), refresh_token: String::new(), xuid: String::new(), expires_at_unix: i64::MAX,
++    };
++    persist_account(&state.data_dir, &session)?;
++    state.accounts.lock().map_err(|e| e.to_string())?.insert(id.clone(), session);
++    Ok(AccountSummary { id, username: username.to_string(), uuid, account_type: "offline".to_string() })
+ }
+ 
+ #[tauri::command]
+ fn remove_account(state: State<'_, LauncherState>, account_id: String) -> Result<(), String> {
+     state.accounts.lock().map_err(|e| e.to_string())?.remove(&account_id);
+-    if cfg!(target_os = "windows") {
+-        let mut stored = storage::load_accounts(&state.data_dir);
+-        stored.retain(|a| a.id != account_id);
+-        storage::save_accounts(&state.data_dir, &stored)?;
+-    }
++    let mut stored = storage::load_accounts(&state.data_dir);
++    stored.retain(|a| a.id != account_id);
++    storage::save_accounts(&state.data_dir, &stored)?;
+     Ok(())
+ }
+ 
+@@ -419,8 +453,8 @@ async fn launch_instance(app: AppHandle, state: State<'_, LauncherState>, instan
+         if running.contains(&instance_id) { return Err("This instance is already running".to_string()); }
+     }
+     let launcher_settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
+-    let mut account = state.accounts.lock().map_err(|e| e.to_string())?.get(&account_id).cloned().ok_or("Sign in with Microsoft first")?;
+-    if account.expires_at_unix <= Utc::now().timestamp() || account.access_token.is_empty() {
++    let mut account = state.accounts.lock().map_err(|e| e.to_string())?.get(&account_id).cloned().ok_or("Select an account first")?;
++    if account.account_type == "microsoft" && (account.expires_at_unix <= Utc::now().timestamp() || account.access_token.is_empty()) {
+         let (_, refreshed) = auth::refresh_account(&state.client, &launcher_settings.microsoft_client_id, &account.refresh_token).await?;
+         persist_account(&state.data_dir, &refreshed)?;
+         state.accounts.lock().map_err(|e| e.to_string())?.insert(refreshed.id.clone(), refreshed.clone());
+@@ -519,7 +553,7 @@ pub fn run() {
+             get_minecraft_versions, get_loader_versions, detect_java, prepare_instance,
+             search_content, install_modpack, list_installed_content, install_content, update_all_content, set_content_enabled, remove_content,
+             list_worlds, create_backup, list_backups, restore_backup, latest_log, open_instance_folder,
+-            begin_microsoft_login, complete_microsoft_login, list_accounts, remove_account, list_running_instances, launch_instance, open_external_url
++            begin_microsoft_login, complete_microsoft_login, create_offline_account, list_accounts, remove_account, list_running_instances, launch_instance, open_external_url
+         ])
+         .run(tauri::generate_context!())
+         .expect("error while running Vertex Launcher");
+diff --git a/src-tauri/src/minecraft.rs b/src-tauri/src/minecraft.rs
+index 89daaa4..75df7fc 100644
+--- a/src-tauri/src/minecraft.rs
++++ b/src-tauri/src/minecraft.rs
+@@ -785,7 +785,7 @@ pub fn spawn_insta
