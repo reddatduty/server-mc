@@ -25,7 +25,7 @@ jobs:
         run: |
           $names = @(
             'final00.txt','final01.txt','final02.txt','final03.txt',
-            'final04a.txt','final04b.txt','final04c.txt',
+            'final04a.txt','final04b0.txt','final04b1.txt','final04b2.txt','final04b3.txt','final04c.txt',
             'final05.txt','final06.txt','final07.txt','final08.txt','final09.txt'
           )
           $b64 = ($names | ForEach-Object { Get-Content (Join-Path 'vertex-final' $_) -Raw }) -join ''
