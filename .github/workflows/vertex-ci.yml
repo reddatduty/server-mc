@@ -1,5 +1,6 @@
 name: Vertex Windows CI
 
+# Build trigger after complete source upload
 on:
   workflow_dispatch:
   push:
