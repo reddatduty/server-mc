@@ -1,6 +1,6 @@
 name: Vertex Windows CI
 
-# Build trigger after complete source upload
+# Build trigger after corrected source upload
 on:
   workflow_dispatch:
   push:
@@ -24,8 +24,12 @@ jobs:
       - name: Reconstruct and verify source
         shell: pwsh
         run: |
-          $parts = Get-ChildItem vertex-ci/part*.txt | Sort-Object Name
-          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $names = @(
+            'part00.txt','part01.txt','part02.txt','part03.txt','part04.txt','part05.txt',
+            'part06a1.txt','part06a2.txt','part06b1.txt','part06b2.txt',
+            'part07a.txt','part07b.txt'
+          )
+          $b64 = ($names | ForEach-Object { Get-Content (Join-Path 'vertex-ci' $_) -Raw }) -join ''
           [IO.File]::WriteAllBytes('vertex-source.zip', [Convert]::FromBase64String($b64))
           $actual = (Get-FileHash vertex-source.zip -Algorithm SHA256).Hash.ToLower()
           $expected = '37c3b5020ec51937253c3317e224654584d319262ddd260d649d10503d44b908'
