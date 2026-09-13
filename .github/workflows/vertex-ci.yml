@@ -1,0 +1,54 @@
+name: Vertex Windows CI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'vertex-ci/**'
+      - '.github/workflows/vertex-ci.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Reconstruct and verify source
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem vertex-ci/part*.txt | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('vertex-source.zip', [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash vertex-source.zip -Algorithm SHA256).Hash.ToLower()
+          $expected = '37c3b5020ec51937253c3317e224654584d319262ddd260d649d10503d44b908'
+          if ($actual -ne $expected) { throw "Source checksum mismatch: $actual" }
+          Expand-Archive vertex-source.zip vertex-src -Force
+
+      - name: Install frontend dependencies
+        working-directory: vertex-src
+        run: npm install --no-audit --no-fund
+
+      - name: Frontend build
+        working-directory: vertex-src
+        run: npm run build
+
+      - name: Rust check
+        working-directory: vertex-src
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Build NSIS installer
+        working-directory: vertex-src
+        run: npm run tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vertex-launcher-windows
+          path: vertex-src/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
