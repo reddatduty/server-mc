@@ -39,7 +39,7 @@ jobs:
       - name: Fix frontend dependency pin
         working-directory: vertex-src
         shell: pwsh
-        run: npm pkg set devDependencies.typescript=7.0.2
+        run: npm pkg set devDependencies.typescript=5.9.3
 
       - name: Install frontend dependencies
         working-directory: vertex-src
