@@ -64,12 +64,10 @@ jobs:
           $patchParts = @('offline-ci-patch-00.txt','offline-ci-patch-01.txt','offline-ci-patch-02.txt','offline-ci-patch-03.txt')
           $patch = ($patchParts | ForEach-Object { Get-Content (Join-Path 'vertex-ci' $_) -Raw }) -join ''
           [IO.File]::WriteAllText('vertex-offline.patch', $patch, [Text.UTF8Encoding]::new($false))
-          Push-Location vertex-src
-          git apply --check ../vertex-offline.patch
+          git apply --check --directory=vertex-src vertex-offline.patch
           if ($LASTEXITCODE -ne 0) { throw 'Offline Mode patch check failed.' }
-          git apply ../vertex-offline.patch
+          git apply --directory=vertex-src vertex-offline.patch
           if ($LASTEXITCODE -ne 0) { throw 'Offline Mode patch apply failed.' }
-          Pop-Location
           $pkg = Get-Content vertex-src/package.json -Raw | ConvertFrom-Json
           if ($pkg.version -ne '0.3.1') { throw "Offline patch version is $($pkg.version), expected 0.3.1." }
           if ((Get-Content vertex-src/src-tauri/src/lib.rs -Raw) -notmatch 'create_offline_account') { throw 'Offline account backend missing after patch.' }
