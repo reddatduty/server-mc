@@ -32,7 +32,7 @@ jobs:
           $b64 = ($names | ForEach-Object { Get-Content (Join-Path 'vertex-ci' $_) -Raw }) -join ''
           [IO.File]::WriteAllBytes('vertex-source.zip', [Convert]::FromBase64String($b64))
           $actual = (Get-FileHash vertex-source.zip -Algorithm SHA256).Hash.ToLower()
-          $expected = '37c3b5020ec51937253c3317e224654584d319262ddd260d649d10503d44b908'
+          $expected = 'a867c3d3a06bbd812378dbd2d60fe6864f1f36d52fccc71a011d99a986f0df33'
           if ($actual -ne $expected) { throw "Source checksum mismatch: $actual" }
           Expand-Archive vertex-source.zip vertex-src -Force
 
