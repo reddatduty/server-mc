@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'vertex-ci/**'
+      - 'vertex-final/**'
       - '.github/workflows/vertex-ci.yml'
 
 jobs:
@@ -20,58 +20,23 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Reconstruct and verify source
+      - name: Reconstruct exact Vertex 0.3.1 source
         shell: pwsh
         run: |
           $names = @(
-            'part00.txt','part01.txt','part02.txt','part03.txt','part04.txt','part05.txt',
-            'part06a1.txt','part06a2.txt','part06b1.txt','part06b2.txt',
-            'part07a.txt','part07b.txt'
+            'final00.txt','final01.txt','final02.txt','final03.txt','final04.txt',
+            'final05.txt','final06.txt','final07.txt','final08.txt','final09.txt'
           )
-          $b64 = ($names | ForEach-Object { Get-Content (Join-Path 'vertex-ci' $_) -Raw }) -join ''
-          [IO.File]::WriteAllBytes('vertex-source.zip', [Convert]::FromBase64String($b64))
-          $actual = (Get-FileHash vertex-source.zip -Algorithm SHA256).Hash.ToLower()
-          $expected = 'a867c3d3a06bbd812378dbd2d60fe6864f1f36d52fccc71a011d99a986f0df33'
+          $b64 = ($names | ForEach-Object { Get-Content (Join-Path 'vertex-final' $_) -Raw }) -join ''
+          [IO.File]::WriteAllBytes('Vertex-Launcher-0.3.1-Source.zip', [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash 'Vertex-Launcher-0.3.1-Source.zip' -Algorithm SHA256).Hash.ToLower()
+          $expected = '7dc0e2f945a7f858a4d81f8e5f4d8d2d853a9ccf8dfec69c1ff887994c2c5f7a'
           if ($actual -ne $expected) { throw "Source checksum mismatch: $actual" }
-          Expand-Archive vertex-source.zip vertex-src -Force
-
-      - name: Apply source fixes
-        working-directory: vertex-src
-        shell: pwsh
-        run: |
-          $p = 'src-tauri/src/content.rs'
-          $s = Get-Content $p -Raw
-          $s = $s.Replace('entry.enclosed_name().map(Path::to_path_buf)', 'entry.enclosed_name()')
-          $s = $s.Replace('let mut installed = Vec::new();`n    let mut mod_count = 0u32;`n    for item in index.get("files")', 'let installed = Vec::new();`n    let mut mod_count = 0u32;`n    for item in index.get("files")')
-          Set-Content $p $s -NoNewline
-
-          $p = 'src-tauri/src/minecraft.rs'
-          $s = Get-Content $p -Raw
-          $s = $s.Replace('entry.enclosed_name().map(Path::to_path_buf)', 'entry.enclosed_name()')
-          $s = $s.Replace('use sha2::{Digest as Sha2Digest, Sha256, Sha512};', 'use sha2::{Sha256, Sha512};')
-          $s = $s.Replace('io::{Read, Write},', 'io::Read,')
-          Set-Content $p $s -NoNewline
-
-          $p = 'src-tauri/src/instance_tools.rs'
-          $s = Get-Content $p -Raw
-          $s = $s.Replace('io::{Read, Write}', 'io::Read')
-          Set-Content $p $s -NoNewline
-
-      - name: Apply Offline Mode patch
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $patchParts = @('offline-ci-patch-00.txt','offline-ci-patch-01.txt','offline-ci-patch-02.txt','offline-ci-patch-03.txt')
-          $patch = ($patchParts | ForEach-Object { Get-Content (Join-Path 'vertex-ci' $_) -Raw }) -join ''
-          [IO.File]::WriteAllText('vertex-offline.patch', $patch, [Text.UTF8Encoding]::new($false))
-          git apply --check --directory=vertex-src vertex-offline.patch
-          if ($LASTEXITCODE -ne 0) { throw 'Offline Mode patch check failed.' }
-          git apply --directory=vertex-src vertex-offline.patch
-          if ($LASTEXITCODE -ne 0) { throw 'Offline Mode patch apply failed.' }
+          Expand-Archive 'Vertex-Launcher-0.3.1-Source.zip' vertex-src -Force
           $pkg = Get-Content vertex-src/package.json -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.3.1') { throw "Offline patch version is $($pkg.version), expected 0.3.1." }
-          if ((Get-Content vertex-src/src-tauri/src/lib.rs -Raw) -notmatch 'create_offline_account') { throw 'Offline account backend missing after patch.' }
-          if ((Get-Content vertex-src/src/App.vue -Raw) -notmatch 'Offline Mode') { throw 'Offline Mode UI missing after patch.' }
+          if ($pkg.version -ne '0.3.1') { throw "Wrong package version: $($pkg.version)" }
+          if ((Get-Content vertex-src/src-tauri/src/lib.rs -Raw) -notmatch 'create_offline_account') { throw 'Offline backend missing.' }
+          if ((Get-Content vertex-src/src/App.vue -Raw) -notmatch 'Offline Mode') { throw 'Offline Mode UI missing.' }
 
       - name: Install frontend dependencies
         working-directory: vertex-src
