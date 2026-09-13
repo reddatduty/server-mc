@@ -1,6 +1,5 @@
 name: Vertex Windows CI
 
-# Build trigger after corrected source upload
 on:
   workflow_dispatch:
   push:
@@ -58,10 +57,16 @@ jobs:
           $s = $s.Replace('io::{Read, Write}', 'io::Read')
           Set-Content $p $s -NoNewline
 
-      - name: Fix frontend dependency pin
-        working-directory: vertex-src
+      - name: Apply Offline Mode patch
         shell: pwsh
-        run: npm pkg set devDependencies.typescript=5.9.3
+        run: |
+          $patchParts = @('offline-patch-00.txt','offline-patch-01.txt','offline-patch-02.txt','offline-patch-03.txt')
+          $patch = ($patchParts | ForEach-Object { Get-Content (Join-Path 'vertex-ci' $_) -Raw }) -join ''
+          [IO.File]::WriteAllText('vertex-offline.patch', $patch, [Text.UTF8Encoding]::new($false))
+          Push-Location vertex-src
+          git apply --check ../vertex-offline.patch
+          git apply ../vertex-offline.patch
+          Pop-Location
 
       - name: Install frontend dependencies
         working-directory: vertex-src
@@ -81,6 +86,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: vertex-launcher-windows
+          name: vertex-launcher-0.3.1-windows
           path: vertex-src/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
