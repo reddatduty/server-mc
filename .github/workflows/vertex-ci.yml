@@ -36,6 +36,11 @@ jobs:
           if ($actual -ne $expected) { throw "Source checksum mismatch: $actual" }
           Expand-Archive vertex-source.zip vertex-src -Force
 
+      - name: Fix frontend dependency pin
+        working-directory: vertex-src
+        shell: pwsh
+        run: npm pkg set devDependencies.typescript=7.0.2
+
       - name: Install frontend dependencies
         working-directory: vertex-src
         run: npm install --no-audit --no-fund
