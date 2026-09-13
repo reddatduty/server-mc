@@ -36,6 +36,28 @@ jobs:
           if ($actual -ne $expected) { throw "Source checksum mismatch: $actual" }
           Expand-Archive vertex-source.zip vertex-src -Force
 
+      - name: Apply source fixes
+        working-directory: vertex-src
+        shell: pwsh
+        run: |
+          $p = 'src-tauri/src/content.rs'
+          $s = Get-Content $p -Raw
+          $s = $s.Replace('entry.enclosed_name().map(Path::to_path_buf)', 'entry.enclosed_name()')
+          $s = $s.Replace('let mut installed = Vec::new();`n    let mut mod_count = 0u32;`n    for item in index.get("files")', 'let installed = Vec::new();`n    let mut mod_count = 0u32;`n    for item in index.get("files")')
+          Set-Content $p $s -NoNewline
+
+          $p = 'src-tauri/src/minecraft.rs'
+          $s = Get-Content $p -Raw
+          $s = $s.Replace('entry.enclosed_name().map(Path::to_path_buf)', 'entry.enclosed_name()')
+          $s = $s.Replace('use sha2::{Digest as Sha2Digest, Sha256, Sha512};', 'use sha2::{Sha256, Sha512};')
+          $s = $s.Replace('io::{Read, Write},', 'io::Read,')
+          Set-Content $p $s -NoNewline
+
+          $p = 'src-tauri/src/instance_tools.rs'
+          $s = Get-Content $p -Raw
+          $s = $s.Replace('io::{Read, Write}', 'io::Read')
+          Set-Content $p $s -NoNewline
+
       - name: Fix frontend dependency pin
         working-directory: vertex-src
         shell: pwsh
