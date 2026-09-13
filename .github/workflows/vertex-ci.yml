@@ -70,9 +70,9 @@ jobs:
           git apply ../vertex-offline.patch
           if ($LASTEXITCODE -ne 0) { throw 'Offline Mode patch apply failed.' }
           Pop-Location
-          if ((Get-Content package.json -Raw) -notmatch '"version"\s*:\s*"0\.3\.1"') { throw 'Offline patch did not update version.' }
-          if ((Get-Content src-tauri/src/lib.rs -Raw) -notmatch 'create_offline_account') { throw 'Offline account backend missing after patch.' }
-          if ((Get-Content src/App.vue -Raw) -notmatch 'Offline Mode') { throw 'Offline Mode UI missing after patch.' }
+          if ((Get-Content vertex-src/package.json -Raw) -notmatch '"version"\s*:\s*"0\.3\.1"') { throw 'Offline patch did not update version.' }
+          if ((Get-Content vertex-src/src-tauri/src/lib.rs -Raw) -notmatch 'create_offline_account') { throw 'Offline account backend missing after patch.' }
+          if ((Get-Content vertex-src/src/App.vue -Raw) -notmatch 'Offline Mode') { throw 'Offline Mode UI missing after patch.' }
 
       - name: Install frontend dependencies
         working-directory: vertex-src
